@@ -36,6 +36,15 @@ async def general_cancel(message: Message, state: FSMContext) -> None:
 # ── Step 1: Client presses "Заказать такси" ────────────────────────────────
 @router.message(F.text == "🚖 Заказать такси")
 async def start_order(message: Message, state: FSMContext) -> None:
+    # ── State guard: block if already mid-flow ──────────────────────────────
+    current_state = await state.get_state()
+    if current_state is not None:
+        await message.answer(
+            "⚠️ Сначала завершите текущее действие.\n"
+            "Если хотите отменить, нажмите '❌ Отмена'."
+        )
+        return
+
     async with AsyncSessionLocal() as session:
         from services.client_service import get_client_by_user_id
         client = await get_client_by_user_id(session, message.from_user.id)

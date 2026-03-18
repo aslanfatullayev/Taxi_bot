@@ -17,15 +17,8 @@ from states.driver_registration import DriverRegistrationFSM
 router = Router()
 
 
-# ── Step 1: Start registration ─────────────────────────────────────────────
-@router.message(F.text == "🚗 Хочу стать водителем")
-async def start_driver_registration(message: Message, state: FSMContext) -> None:
-    await state.set_state(DriverRegistrationFSM.waiting_name)
-    await message.answer(
-        "👤 Введите ваше полное имя:",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
+# NOTE: Driver registration is now initiated via the "🚗 Я водитель" button
+# in client_menu.py (driver_register callback). This file only contains the FSM steps.
 
 # ── Step 2: Name ───────────────────────────────────────────────────────────
 @router.message(DriverRegistrationFSM.waiting_name)

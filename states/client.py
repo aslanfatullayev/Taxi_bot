@@ -8,3 +8,10 @@ class ClientRegistrationFSM(StatesGroup):
 class ClientCancelOrderFSM(StatesGroup):
     """FSM for client cancelling an active order and providing a reason."""
     waiting_reason = State()
+
+class ComplaintFSM(StatesGroup):
+    """FSM for filing a complaint about a driver."""
+    waiting_driver_name = State()
+    waiting_driver_phone = State()
+    waiting_reason = State()
+

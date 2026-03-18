@@ -2,18 +2,17 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 
 
 def client_main_kb() -> ReplyKeyboardMarkup:
-    """Main menu keyboard for clients."""
+    """Main menu keyboard for clients (4 buttons)."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🚖 Заказать такси")],
-            [KeyboardButton(text="🚗 Хочу стать водителем")],
+            [KeyboardButton(text="🚖 Заказать такси"), KeyboardButton(text="🚗 Я водитель")],
+            [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="❓ Помощь")],
         ],
         resize_keyboard=True,
     )
 
 
 def confirm_order_kb() -> ReplyKeyboardMarkup:
-    """Confirmation keyboard shown before placing an order."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="✅ Подтвердить")],
@@ -24,7 +23,6 @@ def confirm_order_kb() -> ReplyKeyboardMarkup:
 
 
 def location_request_kb() -> ReplyKeyboardMarkup:
-    """Keyboard with geolocation button + manual input option."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
@@ -36,8 +34,25 @@ def location_request_kb() -> ReplyKeyboardMarkup:
     )
 
 
+def help_kb() -> InlineKeyboardMarkup:
+    """Help section keyboard."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📛 Подать жалобу", callback_data="help_complaint")],
+        ]
+    )
+
+
+def cancel_inline_kb() -> InlineKeyboardMarkup:
+    """Generic inline cancel."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="help_cancel")]
+        ]
+    )
+
+
 def client_cancel_order_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Inline keyboard for client to cancel an active order."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отменить заказ", callback_data=f"client_cancel_order:{order_id}")]
@@ -46,9 +61,9 @@ def client_cancel_order_kb(order_id: int) -> InlineKeyboardMarkup:
 
 
 def client_cancel_reason_kb() -> InlineKeyboardMarkup:
-    """Inline keyboard to abort cancellation."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Вернуться", callback_data="abort_client_cancel")]
         ]
     )
+

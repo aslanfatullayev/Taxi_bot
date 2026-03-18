@@ -109,6 +109,8 @@ def is_admin(user_id: int) -> bool:
 @router.message(Command("admin"))
 async def admin_panel_command(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
+    # /admin command always clears any active state
+    await state.clear()
     if is_admin(user_id):
         # Already authorized
         await message.answer(
