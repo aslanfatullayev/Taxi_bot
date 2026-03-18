@@ -7,10 +7,10 @@ States:
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardRemove
 
 from db import AsyncSessionLocal
-from keyboards.client_kb import client_main_kb, confirm_order_kb
+from keyboards.client_kb import client_main_kb, confirm_order_kb, location_request_kb
 from keyboards.driver_kb import accept_order_kb
 from services import order_service
 from states.order import OrderFSM
@@ -23,25 +23,54 @@ router = Router()
 async def start_order(message: Message, state: FSMContext) -> None:
     await state.set_state(OrderFSM.waiting_from)
     await message.answer(
-        "📍 Откуда вас забрать?\nВведите адрес отправления:",
-        reply_markup=None,
+        "📍 Откуда вас забрать?\n"
+        "Отправьте геолокацию или напишите адрес вручную:",
+        reply_markup=location_request_kb(),
     )
 
 
 # ── Step 2: Receive pickup location ───────────────────────────────────────
 @router.message(OrderFSM.waiting_from)
 async def get_from_location(message: Message, state: FSMContext) -> None:
-    await state.update_data(from_location=message.text)
+    if message.location:
+        loc = f"{message.location.latitude}, {message.location.longitude}"
+    elif message.text and message.text != "✏️ Написать адрес вручную":
+        loc = message.text
+    else:
+        await message.answer(
+            "Пожалуйста, отправьте геолокацию или просто напишите адрес текстом:",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
+    await state.update_data(from_location=loc)
     await state.set_state(OrderFSM.waiting_to)
-    await message.answer("🏁 Куда едем?\nВведите адрес назначения:")
+    await message.answer(
+        "🏁 Куда едем?\nОтправьте геолокацию или напишите адрес вручную:",
+        reply_markup=location_request_kb(),
+    )
 
 
 # ── Step 3: Receive destination ────────────────────────────────────────────
 @router.message(OrderFSM.waiting_to)
 async def get_to_location(message: Message, state: FSMContext) -> None:
-    await state.update_data(to_location=message.text)
+    if message.location:
+        loc = f"{message.location.latitude}, {message.location.longitude}"
+    elif message.text and message.text != "✏️ Написать адрес вручную":
+        loc = message.text
+    else:
+        await message.answer(
+            "Пожалуйста, отправьте геолокацию или просто напишите адрес текстом:",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
+    await state.update_data(to_location=loc)
     data = await state.get_data()
     await state.set_state(OrderFSM.confirm)
+    
+    # Check if they are coordinates to format them slightly differently if wanted, 
+    # but for now we just show string "lat, lon" or "Address name"
     await message.answer(
         f"📋 Подтвердите заказ:\n\n"
         f"📍 Откуда: {data['from_location']}\n"
