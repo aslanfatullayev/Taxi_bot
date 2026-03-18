@@ -25,6 +25,7 @@ async def init_db() -> None:
     """Create all tables if they don't exist."""
     import models.order   # noqa: F401
     import models.driver  # noqa: F401
+    import models.client  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

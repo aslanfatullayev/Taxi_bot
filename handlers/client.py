@@ -7,20 +7,45 @@ States:
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.types import Message, ReplyKeyboardRemove, CallbackQuery
 
 from db import AsyncSessionLocal
-from keyboards.client_kb import client_main_kb, confirm_order_kb, location_request_kb
+from keyboards.client_kb import (
+    client_main_kb, confirm_order_kb, location_request_kb, 
+    client_cancel_order_kb, client_cancel_reason_kb
+)
 from keyboards.driver_kb import accept_order_kb
+from states.client import ClientCancelOrderFSM
+from models.order import OrderStatus
 from services import order_service
 from states.order import OrderFSM
 
 router = Router()
 
+# ── General Cancellation ───────────────────────────────────────────────────
+@router.message(F.text == "❌ Отмена")
+async def general_cancel(message: Message, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+    await state.clear()
+    await message.answer("❌ Действие отменено.", reply_markup=client_main_kb())
+
+
 
 # ── Step 1: Client presses "Заказать такси" ────────────────────────────────
 @router.message(F.text == "🚖 Заказать такси")
 async def start_order(message: Message, state: FSMContext) -> None:
+    async with AsyncSessionLocal() as session:
+        from services.client_service import get_client_by_user_id
+        client = await get_client_by_user_id(session, message.from_user.id)
+    if not client:
+        await message.answer(
+            "⚠️ Сначала пройдите быструю регистрацию.\nОтправьте команду /start",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
     await state.set_state(OrderFSM.waiting_from)
     await message.answer(
         "📍 Откуда вас забрать?\n"
@@ -80,11 +105,7 @@ async def get_to_location(message: Message, state: FSMContext) -> None:
     )
 
 
-# ── Step 4a: Client cancels ────────────────────────────────────────────────
-@router.message(OrderFSM.confirm, F.text == "❌ Отменить")
-async def cancel_order(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer("❌ Заказ отменён.", reply_markup=client_main_kb())
+# ── Step 4: Client confirm options handled below and by general cancel ─────
 
 
 # ── Step 4b: Client confirms — order saved to DB & sent to random driver ───
@@ -97,6 +118,11 @@ async def confirm_order(message: Message, state: FSMContext) -> None:
     await state.clear()
 
     async with AsyncSessionLocal() as session:
+        from services.client_service import get_client_by_user_id
+        client = await get_client_by_user_id(session, message.from_user.id)
+        client_name = client.name if client else "Неизвестно"
+        client_phone = client.phone if client else "Не указан"
+
         order = await order_service.create_order(
             session=session,
             user_id=message.from_user.id,
@@ -121,10 +147,16 @@ async def confirm_order(message: Message, state: FSMContext) -> None:
         "✅ Заказ принят! Ищем водителя...",
         reply_markup=client_main_kb(),
     )
+    await message.answer(
+        f"Ваш заказ #{order_id} находится в поиске водителя.",
+        reply_markup=client_cancel_order_kb(order_id),
+    )
 
     driver_text = (
         f"🚖 Новый заказ!\n\n"
         f"🆔 Заказ #{order_id}\n"
+        f"👤 Клиент: {client_name}\n"
+        f"📞 Телефон: {client_phone}\n"
         f"📍 Откуда: {from_loc}\n"
         f"🏁 Куда: {to_loc}\n\n"
         f"Нажмите «Принять», чтобы взять заказ."
@@ -157,3 +189,75 @@ async def confirm_order(message: Message, state: FSMContext) -> None:
         )
 
 
+# ── Client Cancels Active Order ────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("client_cancel_order:"))
+async def on_client_cancel_order(callback: CallbackQuery, state: FSMContext) -> None:
+    order_id = int(callback.data.split(":")[1])
+    await state.set_state(ClientCancelOrderFSM.waiting_reason)
+    await state.update_data(cancel_order_id=order_id)
+    await callback.message.edit_text(
+        "Напишите, пожалуйста, причину отмены заказа:",
+        reply_markup=client_cancel_reason_kb()
+    )
+
+
+@router.callback_query(F.data == "abort_client_cancel")
+async def on_abort_client_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    
+    # Ideally we'd restore the cancel button, but for simplicity we can just say resumed.
+    await callback.message.edit_text("Отмена прервана. Ожидайте водителя.")
+
+
+@router.message(ClientCancelOrderFSM.waiting_reason)
+async def process_cancel_reason(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    order_id = data.get("cancel_order_id")
+    reason = message.text
+
+    async with AsyncSessionLocal() as session:
+        order = await order_service.get_order(session, order_id)
+        if not order:
+            await state.clear()
+            await message.answer("Ошибка: Заказ не найден.")
+            return
+
+        if order.status == OrderStatus.CANCELLED:
+            await state.clear()
+            await message.answer("Заказ уже был отменен.")
+            return
+            
+        if order.status == OrderStatus.COMPLETED:
+            await state.clear()
+            await message.answer("Заказ уже завершен.")
+            return
+
+        # Cancel the order
+        await order_service.update_order_status(session, order_id, OrderStatus.CANCELLED)
+
+        # Notify assigned driver if there is one
+        if order.driver_id:
+            from services.driver_service import get_driver_by_user_id, update_driver_status
+            from models.driver import DriverStatus
+            driver = await get_driver_by_user_id(session, order.driver_id)
+            if driver:
+                await update_driver_status(session, driver.id, DriverStatus.IDLE)
+                try:
+                    await message.bot.send_message(
+                        chat_id=driver.user_id,
+                        text=(
+                            f"⚠️ <b>Клиент отменил заказ #{order_id}!</b>\n\n"
+                            f"<b>Причина:</b> {reason}\n\n"
+                            f"<i>Ваш статус изменен на 'Свободен'.</i>"
+                        ),
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    print(f"Failed to notify driver {driver.user_id}: {e}")
+
+    await state.clear()
+    await message.answer(
+        "✅ Ваш заказ успешно отменен.",
+        reply_markup=client_main_kb()
+    )

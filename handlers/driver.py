@@ -11,7 +11,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from db import AsyncSessionLocal
-from keyboards.driver_kb import driver_active_kb
+from keyboards.driver_kb import driver_active_kb, rejected_order_kb
 from models.driver import DriverStatus
 from services import driver_service, order_service
 
@@ -49,6 +49,7 @@ async def accept_order_callback(callback: CallbackQuery) -> None:
 
     # Send driver info to client (YandexGo style)
     try:
+        from keyboards.client_kb import client_cancel_order_kb
         driver_info = (
             f"🎉 Водитель найден!\n\n"
             f"👤 Имя: {driver.name}\n"
@@ -57,7 +58,11 @@ async def accept_order_callback(callback: CallbackQuery) -> None:
             f"🔢 Номер авто: {driver.car_number}\n\n"
             f"Водитель уже едет к вам!"
         )
-        await callback.bot.send_message(chat_id=client_id, text=driver_info)
+        await callback.bot.send_message(
+            chat_id=client_id, 
+            text=driver_info,
+            reply_markup=client_cancel_order_kb(order_id)
+        )
     except Exception as e:
         logging.warning(f"Could not notify client {client_id}: {e}")
 
@@ -91,6 +96,36 @@ async def complete_trip_callback(callback: CallbackQuery) -> None:
         )
     except Exception as e:
         logging.warning(f"Could not notify client {client_id}: {e}")
+
+
+# ── Reject order ───────────────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("reject_order:"))
+async def reject_order_callback(callback: CallbackQuery) -> None:
+    order_id = int(callback.data.split(":")[1])
+    
+    # We just hide the order message and show the rejected menu
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        f"❌ Вы отклонили заказ #{order_id}.\nЧто делаем дальше?",
+        reply_markup=rejected_order_kb(),
+    )
+    await callback.answer()
+
+
+# ── Continue search ────────────────────────────────────────────────────────
+@router.callback_query(F.data == "continue_search")
+async def continue_search_callback(callback: CallbackQuery) -> None:
+    driver_id = callback.from_user.id
+
+    async with AsyncSessionLocal() as session:
+        # Reset driver status to IDLE so they can receive new orders
+        await driver_service.set_driver_status(session, driver_id, DriverStatus.IDLE)
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        "🔍 Вы снова на линии и ожидаете новые заказы!"
+    )
+    await callback.answer()
 
 
 # ── Go offline ─────────────────────────────────────────────────────────────

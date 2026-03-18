@@ -14,5 +14,12 @@ DRIVER_IDS: list[int] = [
     if uid.strip().isdigit()
 ]
 
+# Admin IDs for approving drivers
+ADMIN_IDS: list[int] = [
+    int(uid.strip())
+    for uid in os.getenv("ADMIN_IDS", "1517967852").split(",")  # Using your ID as default
+    if uid.strip().isdigit()
+]
+
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is not set in environment variables.")

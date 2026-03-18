@@ -1,4 +1,4 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def client_main_kb() -> ReplyKeyboardMarkup:
@@ -17,7 +17,7 @@ def confirm_order_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="✅ Подтвердить")],
-            [KeyboardButton(text="❌ Отменить")],
+            [KeyboardButton(text="❌ Отмена")],
         ],
         resize_keyboard=True,
     )
@@ -29,7 +29,26 @@ def location_request_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
             [KeyboardButton(text="✏️ Написать адрес вручную")],
+            [KeyboardButton(text="❌ Отмена")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
+    )
+
+
+def client_cancel_order_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Inline keyboard for client to cancel an active order."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отменить заказ", callback_data=f"client_cancel_order:{order_id}")]
+        ]
+    )
+
+
+def client_cancel_reason_kb() -> InlineKeyboardMarkup:
+    """Inline keyboard to abort cancellation."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Вернуться", callback_data="abort_client_cancel")]
+        ]
     )

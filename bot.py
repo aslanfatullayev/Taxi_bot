@@ -12,7 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
 from db import init_db
-from handlers import common, client, driver, driver_registration
+from handlers import common, client, driver, driver_registration, admin
 
 
 async def main() -> None:
@@ -31,6 +31,8 @@ async def main() -> None:
     dp.include_router(client.router)
     dp.include_router(driver.router)
     dp.include_router(driver_registration.router)
+    dp.include_router(admin.router)
+
 
     logging.info("Bot is starting...")
     try:

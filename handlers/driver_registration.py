@@ -51,34 +51,54 @@ async def get_driver_car_model(message: Message, state: FSMContext) -> None:
     await message.answer("🔢 Введите номер автомобиля:\nПример: 01 A 123 BA")
 
 
-# ── Step 5: Car number → save to DB ────────────────────────────────────────
+# ── Step 5: Car number → send to Admin ─────────────────────────────────────
 @router.message(DriverRegistrationFSM.waiting_car_number)
 async def get_driver_car_number(message: Message, state: FSMContext) -> None:
+    from config import ADMIN_IDS
+    from keyboards.admin_kb import admin_approve_kb
+    from services import admin_service
+
     await state.update_data(car_number=message.text)
     data = await state.get_data()
     await state.clear()
 
-    async with AsyncSessionLocal() as session:
-        added = await driver_service.add_driver(
-            session=session,
-            user_id=message.from_user.id,
-            name=data["name"],
-            phone=data["phone"],
-            car_model=data["car_model"],
-            car_number=data["car_number"],
-        )
+    user_id = message.from_user.id
+    username = message.from_user.username or "без_юзернейма"
+    user_data = {
+        "name": data["name"],
+        "phone": data["phone"],
+        "car_model": data["car_model"],
+        "car_number": data["car_number"],
+    }
 
-    if added:
-        await message.answer(
-            f"✅ Вы успешно зарегистрированы как водитель!\n\n"
-            f"👤 Имя: {data['name']}\n"
-            f"📞 Телефон: {data['phone']}\n"
-            f"🚗 Авто: {data['car_model']}\n"
-            f"🔢 Номер: {data['car_number']}\n\n"
-            f"Ожидайте новые заказы!"
-        )
-    else:
-        await message.answer(
-            "ℹ️ Вы уже зарегистрированы как водитель.\n"
-            "Ожидайте новые заказы!"
-        )
+    # Store in memory for admin approval
+    admin_service.add_pending_driver(user_id, user_data)
+
+    # Notify user
+    await message.answer(
+        "⏳ Ваша заявка отправлена администратору на проверку.\n"
+        "Ожидайте ответа..."
+    )
+
+    # Send to all admins
+    admin_text = (
+        f"🚨 <b>Новая заявка в водители!</b>\n\n"
+        f"<b>ID:</b> <code>{user_id}</code>\n"
+        f"<b>Username:</b> @{username}\n\n"
+        f"👤 <b>Имя:</b> {user_data['name']}\n"
+        f"📞 <b>Телефон:</b> {user_data['phone']}\n"
+        f"🚗 <b>Авто:</b> {user_data['car_model']}\n"
+        f"🔢 <b>Номер:</b> {user_data['car_number']}"
+    )
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await message.bot.send_message(
+                chat_id=admin_id,
+                text=admin_text,
+                reply_markup=admin_approve_kb(user_id),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            print(f"Не удалось отправить уведомление админу {admin_id}: {e}")
+

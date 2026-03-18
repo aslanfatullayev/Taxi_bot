@@ -81,3 +81,23 @@ async def get_all_drivers(session: AsyncSession) -> list[Driver]:
     """Return all drivers regardless of status."""
     result = await session.execute(select(Driver))
     return list(result.scalars().all())
+
+
+async def get_active_drivers(session: AsyncSession) -> list[Driver]:
+    """Return all drivers who are active (not deleted/banned)."""
+    result = await session.execute(
+        select(Driver).where(Driver.is_active == True)  # noqa: E712
+    )
+    return list(result.scalars().all())
+
+
+async def deactivate_driver(session: AsyncSession, user_id: int) -> bool:
+    """Deactivate (ban/delete) a driver so they stop receiving orders."""
+    driver = await get_driver_by_user_id(session, user_id)
+    if not driver:
+        return False
+    driver.is_active = False
+    driver.status = DriverStatus.OFFLINE
+    await session.commit()
+    return True
+

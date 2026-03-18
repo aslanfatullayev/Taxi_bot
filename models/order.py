@@ -8,6 +8,7 @@ class OrderStatus:
     PENDING = "pending"
     ACCEPTED = "accepted"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class Order(Base):
