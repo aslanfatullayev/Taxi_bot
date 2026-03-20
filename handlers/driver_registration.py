@@ -62,8 +62,10 @@ async def get_driver_car_number(message: Message, state: FSMContext) -> None:
         "car_number": data["car_number"],
     }
 
+    from keyboards.client_kb import client_main_kb
+
     admin_service.add_pending_driver(user_id, user_data)
-    await message.answer(t("dreg_sent_to_admin", lang))
+    await message.answer(t("dreg_sent_to_admin", lang), reply_markup=client_main_kb(lang))
 
     admin_text = (
         f"🚨 <b>Новая заявка в водители!</b>\n\n"

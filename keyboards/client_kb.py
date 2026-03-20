@@ -24,6 +24,7 @@ def client_main_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
             [KeyboardButton(text=t("btn_my_profile", lang)), KeyboardButton(text=t("btn_help", lang))],
         ],
         resize_keyboard=True,
+        is_persistent=True,
     )
 
 
