@@ -29,3 +29,13 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+    # Auto-migration for existing databases
+    from sqlalchemy import text
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE clients ADD COLUMN lang VARCHAR(5) NOT NULL DEFAULT 'ru';"))
+    except Exception:
+        # Column likely already exists
+        pass
+

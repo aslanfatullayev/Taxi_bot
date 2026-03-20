@@ -12,3 +12,5 @@ class Client(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    lang: Mapped[str] = mapped_column(String(5), nullable=False, default="ru")
+

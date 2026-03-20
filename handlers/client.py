@@ -1,9 +1,9 @@
 """
-Client handlers — FSM order flow.
-
-States:
-  waiting_from → waiting_to → confirm → (order created & saved to DB)
+Client handlers — FSM order flow (bilingual).
 """
+
+import logging
+import random
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -11,126 +11,117 @@ from aiogram.types import Message, ReplyKeyboardRemove, CallbackQuery
 
 from db import AsyncSessionLocal
 from keyboards.client_kb import (
-    client_main_kb, confirm_order_kb, location_request_kb, 
-    client_cancel_order_kb, client_cancel_reason_kb
+    client_main_kb, confirm_order_kb, location_request_kb,
+    client_cancel_order_kb,
 )
 from keyboards.driver_kb import accept_order_kb
-from states.client import ClientCancelOrderFSM
+from locales import t
 from models.order import OrderStatus
 from services import order_service
+from states.client import ClientCancelOrderFSM
 from states.order import OrderFSM
 
 router = Router()
 
+
+async def _get_lang(user_id: int) -> str:
+    """Helper: fetch client language from DB, default 'ru'."""
+    from services.client_service import get_client_by_user_id
+    async with AsyncSessionLocal() as session:
+        client = await get_client_by_user_id(session, user_id)
+    return client.lang if client else "ru"
+
+
 # ── General Cancellation ───────────────────────────────────────────────────
-@router.message(F.text == "❌ Отмена")
+@router.message(F.text.in_({"❌ Отмена", "❌ Bekor qilish"}))
 async def general_cancel(message: Message, state: FSMContext) -> None:
     current_state = await state.get_state()
     if current_state is None:
         return
+    lang = await _get_lang(message.from_user.id)
     await state.clear()
-    await message.answer("❌ Действие отменено.", reply_markup=client_main_kb())
+    await message.answer(t("action_cancelled", lang), reply_markup=client_main_kb(lang))
 
 
-
-# ── Step 1: Client presses "Заказать такси" ────────────────────────────────
-@router.message(F.text == "🚖 Заказать такси")
+# ── Step 1: Order taxi ─────────────────────────────────────────────────────
+@router.message(F.text.in_({"🚖 Заказать такси", "🚖 Taksi chaqirish"}))
 async def start_order(message: Message, state: FSMContext) -> None:
-    # ── State guard: block if already mid-flow ──────────────────────────────
+    lang = await _get_lang(message.from_user.id)
+
     current_state = await state.get_state()
     if current_state is not None:
-        await message.answer(
-            "⚠️ Сначала завершите текущее действие.\n"
-            "Если хотите отменить, нажмите '❌ Отмена'."
-        )
+        await message.answer(t("state_guard", lang))
         return
 
     async with AsyncSessionLocal() as session:
         from services.client_service import get_client_by_user_id
         client = await get_client_by_user_id(session, message.from_user.id)
     if not client:
-        await message.answer(
-            "⚠️ Сначала пройдите быструю регистрацию.\nОтправьте команду /start",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        await message.answer(t("not_registered_order", lang), reply_markup=ReplyKeyboardRemove())
         return
 
     await state.set_state(OrderFSM.waiting_from)
-    await message.answer(
-        "📍 Откуда вас забрать?\n"
-        "Отправьте геолокацию или напишите адрес вручную:",
-        reply_markup=location_request_kb(),
-    )
+    await message.answer(t("ask_from_location", lang), reply_markup=location_request_kb(lang))
 
 
-# ── Step 2: Receive pickup location ───────────────────────────────────────
+# ── Step 2: Pickup location ────────────────────────────────────────────────
 @router.message(OrderFSM.waiting_from)
 async def get_from_location(message: Message, state: FSMContext) -> None:
+    lang = await _get_lang(message.from_user.id)
+    type_addr = t("btn_type_address", lang)
+
     if message.location:
         loc = f"{message.location.latitude}, {message.location.longitude}"
-    elif message.text and message.text != "✏️ Написать адрес вручную":
+    elif message.text and message.text != type_addr:
         loc = message.text
     else:
-        await message.answer(
-            "Пожалуйста, отправьте геолокацию или просто напишите адрес текстом:",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        await message.answer(t("ask_location_again", lang), reply_markup=ReplyKeyboardRemove())
         return
 
     await state.update_data(from_location=loc)
     await state.set_state(OrderFSM.waiting_to)
-    await message.answer(
-        "🏁 Куда едем?\nОтправьте геолокацию или напишите адрес вручную:",
-        reply_markup=location_request_kb(),
-    )
+    await message.answer(t("ask_to_location", lang), reply_markup=location_request_kb(lang))
 
 
-# ── Step 3: Receive destination ────────────────────────────────────────────
+# ── Step 3: Destination ────────────────────────────────────────────────────
 @router.message(OrderFSM.waiting_to)
 async def get_to_location(message: Message, state: FSMContext) -> None:
+    lang = await _get_lang(message.from_user.id)
+    type_addr = t("btn_type_address", lang)
+
     if message.location:
         loc = f"{message.location.latitude}, {message.location.longitude}"
-    elif message.text and message.text != "✏️ Написать адрес вручную":
+    elif message.text and message.text != type_addr:
         loc = message.text
     else:
-        await message.answer(
-            "Пожалуйста, отправьте геолокацию или просто напишите адрес текстом:",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        await message.answer(t("ask_location_again", lang), reply_markup=ReplyKeyboardRemove())
         return
 
     await state.update_data(to_location=loc)
     data = await state.get_data()
     await state.set_state(OrderFSM.confirm)
-    
-    # Check if they are coordinates to format them slightly differently if wanted, 
-    # but for now we just show string "lat, lon" or "Address name"
     await message.answer(
-        f"📋 Подтвердите заказ:\n\n"
-        f"📍 Откуда: {data['from_location']}\n"
-        f"🏁 Куда: {data['to_location']}\n\n"
-        f"Всё верно?",
-        reply_markup=confirm_order_kb(),
+        t("order_confirm_text", lang).format(
+            from_loc=data["from_location"], to_loc=loc
+        ),
+        reply_markup=confirm_order_kb(lang),
     )
 
 
-# ── Step 4: Client confirm options handled below and by general cancel ─────
-
-
-# ── Step 4b: Client confirms — order saved to DB & sent to random driver ───
-@router.message(OrderFSM.confirm, F.text == "✅ Подтвердить")
+# ── Step 4b: Confirm order ─────────────────────────────────────────────────
+@router.message(OrderFSM.confirm, F.text.in_({"✅ Подтвердить", "✅ Tasdiqlash"}))
 async def confirm_order(message: Message, state: FSMContext) -> None:
-    import random
     from services import driver_service
 
+    lang = await _get_lang(message.from_user.id)
     data = await state.get_data()
     await state.clear()
 
     async with AsyncSessionLocal() as session:
         from services.client_service import get_client_by_user_id
         client = await get_client_by_user_id(session, message.from_user.id)
-        client_name = client.name if client else "Неизвестно"
-        client_phone = client.phone if client else "Не указан"
+        client_name = client.name if client else "—"
+        client_phone = client.phone if client else "—"
 
         order = await order_service.create_order(
             session=session,
@@ -141,41 +132,26 @@ async def confirm_order(message: Message, state: FSMContext) -> None:
         order_id = order.id
         from_loc = order.from_location
         to_loc = order.to_location
-
-        # Only idle drivers can receive new orders
         driver_ids = await driver_service.get_available_driver_ids(session)
 
     if not driver_ids:
-        await message.answer(
-            "⚠️ К сожалению, сейчас нет доступных водителей. Попробуйте позже.",
-            reply_markup=client_main_kb(),
-        )
+        await message.answer(t("no_drivers", lang), reply_markup=client_main_kb(lang))
         return
 
+    await message.answer(t("order_accepted", lang), reply_markup=client_main_kb(lang))
     await message.answer(
-        "✅ Заказ принят! Ищем водителя...",
-        reply_markup=client_main_kb(),
-    )
-    await message.answer(
-        f"Ваш заказ #{order_id} находится в поиске водителя.",
-        reply_markup=client_cancel_order_kb(order_id),
+        t("order_searching", lang).format(order_id=order_id),
+        reply_markup=client_cancel_order_kb(order_id, lang),
     )
 
-    driver_text = (
-        f"🚖 Новый заказ!\n\n"
-        f"🆔 Заказ #{order_id}\n"
-        f"👤 Клиент: {client_name}\n"
-        f"📞 Телефон: {client_phone}\n"
-        f"📍 Откуда: {from_loc}\n"
-        f"🏁 Куда: {to_loc}\n\n"
-        f"Нажмите «Принять», чтобы взять заказ."
+    driver_text = t("new_order_for_driver", "ru").format(
+        order_id=order_id,
+        client_name=client_name,
+        client_phone=client_phone,
+        from_loc=from_loc,
+        to_loc=to_loc,
     )
 
-    import logging
-    import random
-
-    # Shuffle and try each driver until one successfully receives the message.
-    # This handles cases where a driver blocked the bot or has a fake/outdated ID.
     random.shuffle(driver_ids)
     sent = False
     for driver_id in driver_ids:
@@ -190,33 +166,19 @@ async def confirm_order(message: Message, state: FSMContext) -> None:
             break
         except Exception as e:
             logging.warning(f"Could not send order to driver {driver_id}: {e}")
-            continue
 
     if not sent:
-        await message.answer(
-            "⚠️ Не удалось найти доступного водителя. Попробуйте позже."
-        )
+        await message.answer(t("no_driver_found", lang))
 
 
-# ── Client Cancels Active Order ────────────────────────────────────────────
-
+# ── Client cancels active order ────────────────────────────────────────────
 @router.callback_query(F.data.startswith("client_cancel_order:"))
 async def on_client_cancel_order(callback: CallbackQuery, state: FSMContext) -> None:
     order_id = int(callback.data.split(":")[1])
+    lang = await _get_lang(callback.from_user.id)
     await state.set_state(ClientCancelOrderFSM.waiting_reason)
     await state.update_data(cancel_order_id=order_id)
-    await callback.message.edit_text(
-        "Напишите, пожалуйста, причину отмены заказа:",
-        reply_markup=client_cancel_reason_kb()
-    )
-
-
-@router.callback_query(F.data == "abort_client_cancel")
-async def on_abort_client_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    
-    # Ideally we'd restore the cancel button, but for simplicity we can just say resumed.
-    await callback.message.edit_text("Отмена прервана. Ожидайте водителя.")
+    await callback.message.edit_text(t("ask_cancel_reason", lang))
 
 
 @router.message(ClientCancelOrderFSM.waiting_reason)
@@ -225,48 +187,42 @@ async def process_cancel_reason(message: Message, state: FSMContext) -> None:
     order_id = data.get("cancel_order_id")
     reason = message.text
 
+    lang = await _get_lang(message.from_user.id)
+    await state.clear()
+
+    if not order_id:
+        await message.answer(t("order_not_found", lang), reply_markup=client_main_kb(lang))
+        return
+
     async with AsyncSessionLocal() as session:
         order = await order_service.get_order(session, order_id)
+
         if not order:
-            await state.clear()
-            await message.answer("Ошибка: Заказ не найден.")
+            await message.answer(t("order_not_found", lang), reply_markup=client_main_kb(lang))
             return
-
         if order.status == OrderStatus.CANCELLED:
-            await state.clear()
-            await message.answer("Заказ уже был отменен.")
+            await message.answer(t("order_already_cancel", lang), reply_markup=client_main_kb(lang))
             return
-            
         if order.status == OrderStatus.COMPLETED:
-            await state.clear()
-            await message.answer("Заказ уже завершен.")
+            await message.answer(t("order_already_done", lang), reply_markup=client_main_kb(lang))
             return
 
-        # Cancel the order
-        await order_service.update_order_status(session, order_id, OrderStatus.CANCELLED)
+        order.status = OrderStatus.CANCELLED
+        await session.commit()
 
-        # Notify assigned driver if there is one
         if order.driver_id:
-            from services.driver_service import get_driver_by_user_id, update_driver_status
+            from services import driver_service as drv_svc
             from models.driver import DriverStatus
-            driver = await get_driver_by_user_id(session, order.driver_id)
-            if driver:
-                await update_driver_status(session, driver.id, DriverStatus.IDLE)
-                try:
-                    await message.bot.send_message(
-                        chat_id=driver.user_id,
-                        text=(
-                            f"⚠️ <b>Клиент отменил заказ #{order_id}!</b>\n\n"
-                            f"<b>Причина:</b> {reason}\n\n"
-                            f"<i>Ваш статус изменен на 'Свободен'.</i>"
-                        ),
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    print(f"Failed to notify driver {driver.user_id}: {e}")
+            await drv_svc.set_driver_status(session, order.driver_id, DriverStatus.IDLE)
+            try:
+                await message.bot.send_message(
+                    chat_id=order.driver_id,
+                    text=t("client_cancelled_order", "ru").format(
+                        order_id=order_id, reason=reason
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                print(f"Failed to notify driver {order.driver_id}: {e}")
 
-    await state.clear()
-    await message.answer(
-        "✅ Ваш заказ успешно отменен.",
-        reply_markup=client_main_kb()
-    )
+    await message.answer(t("order_cancelled_ok", lang), reply_markup=client_main_kb(lang))

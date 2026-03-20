@@ -47,21 +47,22 @@ async def accept_order_callback(callback: CallbackQuery) -> None:
     )
     await callback.answer()
 
-    # Send driver info to client (YandexGo style)
+    # Send driver info to client in the client's language
     try:
         from keyboards.client_kb import client_cancel_order_kb
-        driver_info = (
-            f"🎉 Водитель найден!\n\n"
-            f"👤 Имя: {driver.name}\n"
-            f"📞 Телефон: {driver.phone}\n"
-            f"🚗 Авто: {driver.car_model}\n"
-            f"🔢 Номер авто: {driver.car_number}\n\n"
-            f"Водитель уже едет к вам!"
+        from services.client_service import get_client_by_user_id
+        from locales import t
+        async with AsyncSessionLocal() as _sess:
+            _client = await get_client_by_user_id(_sess, client_id)
+        _lang = _client.lang if _client else "ru"
+        driver_info = t("driver_found", _lang).format(
+            name=driver.name, phone=driver.phone,
+            car_model=driver.car_model, car_number=driver.car_number,
         )
         await callback.bot.send_message(
-            chat_id=client_id, 
+            chat_id=client_id,
             text=driver_info,
-            reply_markup=client_cancel_order_kb(order_id)
+            reply_markup=client_cancel_order_kb(order_id, _lang)
         )
     except Exception as e:
         logging.warning(f"Could not notify client {client_id}: {e}")
@@ -90,9 +91,14 @@ async def complete_trip_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
     try:
+        from services.client_service import get_client_by_user_id
+        from locales import t
+        async with AsyncSessionLocal() as _sess:
+            _client = await get_client_by_user_id(_sess, client_id)
+        _lang = _client.lang if _client else "ru"
         await callback.bot.send_message(
             chat_id=client_id,
-            text="🏁 Ваша поездка завершена!\nСпасибо, что воспользовались нашим сервисом. 🙏",
+            text=t("trip_done_for_client", _lang),
         )
     except Exception as e:
         logging.warning(f"Could not notify client {client_id}: {e}")
@@ -139,6 +145,7 @@ async def go_offline_callback(callback: CallbackQuery) -> None:
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         "📴 Вы завершили работу. До свидания!\n"
-        "Чтобы снова принимать заказы — нажмите 🚗 Хочу стать водителем."
+        "Чтобы снова принимать заказы — нажмите кнопку <b>🚗 Я водитель</b> в меню.",
+        parse_mode="HTML",
     )
     await callback.answer()

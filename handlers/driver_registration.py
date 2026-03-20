@@ -1,56 +1,54 @@
 """
-Driver registration handler — multi-step FSM.
-
-Flow:
-  Button "🚗 Хочу стать водителем"
-    → name → phone → car_model → car_number → saved to DB
+Driver registration FSM handlers (bilingual).
+Registration is initiated from client_menu.py via the 'Стать водителем' button.
 """
 
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.types import Message
 
-from db import AsyncSessionLocal
-from services import driver_service
 from states.driver_registration import DriverRegistrationFSM
+from locales import t
 
 router = Router()
 
 
-# NOTE: Driver registration is now initiated via the "🚗 Я водитель" button
-# in client_menu.py (driver_register callback). This file only contains the FSM steps.
+async def _lang(state: FSMContext) -> str:
+    data = await state.get_data()
+    return data.get("lang", "ru")
 
-# ── Step 2: Name ───────────────────────────────────────────────────────────
+
 @router.message(DriverRegistrationFSM.waiting_name)
 async def get_driver_name(message: Message, state: FSMContext) -> None:
+    lang = await _lang(state)
     await state.update_data(name=message.text)
     await state.set_state(DriverRegistrationFSM.waiting_phone)
-    await message.answer("📞 Введите ваш номер телефона:\nПример: +998901234567")
+    await message.answer(t("dreg_ask_phone", lang))
 
 
-# ── Step 3: Phone ──────────────────────────────────────────────────────────
 @router.message(DriverRegistrationFSM.waiting_phone)
 async def get_driver_phone(message: Message, state: FSMContext) -> None:
+    lang = await _lang(state)
     await state.update_data(phone=message.text)
     await state.set_state(DriverRegistrationFSM.waiting_car_model)
-    await message.answer("🚗 Введите марку и модель автомобиля:\nПример: KIA K5")
+    await message.answer(t("dreg_ask_car_model", lang))
 
 
-# ── Step 4: Car model ──────────────────────────────────────────────────────
 @router.message(DriverRegistrationFSM.waiting_car_model)
 async def get_driver_car_model(message: Message, state: FSMContext) -> None:
+    lang = await _lang(state)
     await state.update_data(car_model=message.text)
     await state.set_state(DriverRegistrationFSM.waiting_car_number)
-    await message.answer("🔢 Введите номер автомобиля:\nПример: 01 A 123 BA")
+    await message.answer(t("dreg_ask_car_number", lang))
 
 
-# ── Step 5: Car number → send to Admin ─────────────────────────────────────
 @router.message(DriverRegistrationFSM.waiting_car_number)
 async def get_driver_car_number(message: Message, state: FSMContext) -> None:
     from config import ADMIN_IDS
     from keyboards.admin_kb import admin_approve_kb
     from services import admin_service
 
+    lang = await _lang(state)
     await state.update_data(car_number=message.text)
     data = await state.get_data()
     await state.clear()
@@ -64,16 +62,9 @@ async def get_driver_car_number(message: Message, state: FSMContext) -> None:
         "car_number": data["car_number"],
     }
 
-    # Store in memory for admin approval
     admin_service.add_pending_driver(user_id, user_data)
+    await message.answer(t("dreg_sent_to_admin", lang))
 
-    # Notify user
-    await message.answer(
-        "⏳ Ваша заявка отправлена администратору на проверку.\n"
-        "Ожидайте ответа..."
-    )
-
-    # Send to all admins
     admin_text = (
         f"🚨 <b>Новая заявка в водители!</b>\n\n"
         f"<b>ID:</b> <code>{user_id}</code>\n"
@@ -94,4 +85,3 @@ async def get_driver_car_number(message: Message, state: FSMContext) -> None:
             )
         except Exception as e:
             print(f"Не удалось отправить уведомление админу {admin_id}: {e}")
-

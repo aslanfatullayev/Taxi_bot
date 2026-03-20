@@ -1,5 +1,9 @@
 from aiogram.fsm.state import State, StatesGroup
 
+class LanguageSelectFSM(StatesGroup):
+    """FSM for language selection on first start."""
+    waiting_language = State()
+
 class ClientRegistrationFSM(StatesGroup):
     """FSM for registering a new client."""
     waiting_name = State()
@@ -14,4 +18,5 @@ class ComplaintFSM(StatesGroup):
     waiting_driver_name = State()
     waiting_driver_phone = State()
     waiting_reason = State()
+
 

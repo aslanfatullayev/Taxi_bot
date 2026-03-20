@@ -74,3 +74,18 @@ async def get_all_orders(session: AsyncSession) -> list[Order]:
     """Return all orders (useful for admin/debug)."""
     result = await session.execute(select(Order))
     return list(result.scalars().all())
+
+
+async def update_order_status(
+    session: AsyncSession,
+    order_id: int,
+    new_status: str,
+) -> Order | None:
+    """Update the status of an order. Returns the updated Order, or None if not found."""
+    order = await session.get(Order, order_id)
+    if order is None:
+        return None
+    order.status = new_status
+    await session.commit()
+    await session.refresh(order)
+    return order

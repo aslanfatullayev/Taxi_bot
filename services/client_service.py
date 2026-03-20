@@ -15,17 +15,23 @@ async def add_client(
     user_id: int,
     name: str,
     phone: str,
+    lang: str = "ru",
 ) -> bool:
     """Add a new client to the database. Returns True if successfully added."""
     existing = await get_client_by_user_id(session, user_id)
     if existing:
         return False
-        
-    client = Client(
-        user_id=user_id,
-        name=name,
-        phone=phone,
-    )
+
+    client = Client(user_id=user_id, name=name, phone=phone, lang=lang)
     session.add(client)
     await session.commit()
     return True
+
+
+async def update_client_lang(session: AsyncSession, user_id: int, lang: str) -> None:
+    """Update the language preference of a registered client."""
+    client = await get_client_by_user_id(session, user_id)
+    if client:
+        client.lang = lang
+        await session.commit()
+

@@ -1,166 +1,199 @@
 """
-Client menu section handlers:
-  - 👤 Мой профиль
-  - ❓ Помощь (with complaint flow)
-  - 🚗 Я водитель (route to registration or active driver)
+Client menu section handlers (bilingual):
+  - 👤 Мой профиль / Mening profilim
+  - ❓ Помощь / Yordam (with complaint flow)
+  - 🚗 Я водитель / Men haydovchiman
 """
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import (
+    Message, CallbackQuery, ReplyKeyboardRemove,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+)
 
 from config import ADMIN_IDS
 from db import AsyncSessionLocal
-from keyboards.client_kb import client_main_kb, help_kb, cancel_inline_kb
+from keyboards.client_kb import client_main_kb, help_kb, cancel_inline_kb, change_lang_kb
+from locales import t
 from services import client_service, driver_service
 from states.client import ComplaintFSM
 
 router = Router()
 
 
+async def _get_lang(user_id: int) -> str:
+    async with AsyncSessionLocal() as session:
+        client = await client_service.get_client_by_user_id(session, user_id)
+    return client.lang if client else "ru"
+
+
 # ── 👤 My Profile ──────────────────────────────────────────────────────────
-@router.message(F.text == "👤 Мой профиль")
+@router.message(F.text.in_({"👤 Мой профиль", "👤 Mening profilim"}))
 async def my_profile(message: Message, state: FSMContext) -> None:
+    lang = await _get_lang(message.from_user.id)
     current_state = await state.get_state()
     if current_state is not None:
-        await message.answer(
-            "⚠️ Сначала завершите текущее действие.\n"
-            "Нажмите '❌ Отмена', чтобы прервать его."
-        )
+        await message.answer(t("state_guard", lang))
         return
 
     async with AsyncSessionLocal() as session:
         client = await client_service.get_client_by_user_id(session, message.from_user.id)
 
     if not client:
-        await message.answer(
-            "❌ Вы не зарегистрированы.\nОтправьте /start для регистрации."
-        )
+        await message.answer(t("not_registered", lang))
         return
 
     await message.answer(
-        f"👤 <b>Мой профиль</b>\n\n"
-        f"🏷 <b>Имя:</b> {client.name}\n"
-        f"📞 <b>Телефон:</b> {client.phone}\n"
-        f"🆔 <b>Telegram ID:</b> <code>{client.user_id}</code>",
+        t("profile_title", lang).format(
+            name=client.name, phone=client.phone, user_id=client.user_id
+        ),
         parse_mode="HTML",
-        reply_markup=client_main_kb(),
+        reply_markup=change_lang_kb(lang),
     )
 
 
+# ── 🌐 Change Language ──────────────────────────────────────────────────────
+@router.callback_query(F.data == "client_change_lang")
+async def client_change_lang(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(callback.from_user.id)
+    new_lang = "uz" if lang == "ru" else "ru"
+
+    async with AsyncSessionLocal() as session:
+        await client_service.update_client_lang(session, callback.from_user.id, new_lang)
+        client = await client_service.get_client_by_user_id(session, callback.from_user.id)
+
+    # Refresh Profile message with new language
+    await callback.message.edit_text(
+        t("profile_title", new_lang).format(
+            name=client.name, phone=client.phone, user_id=client.user_id
+        ),
+        parse_mode="HTML",
+        reply_markup=change_lang_kb(new_lang),
+    )
+    
+    # Notify user and update ReplyKeyboard
+    await callback.message.answer(
+        t("lang_changed", new_lang),
+        reply_markup=client_main_kb(new_lang)
+    )
+    await callback.answer()
+
+
 # ── ❓ Help ─────────────────────────────────────────────────────────────────
-@router.message(F.text == "❓ Помощь")
+@router.message(F.text.in_({"❓ Помощь", "❓ Yordam"}))
 async def help_section(message: Message, state: FSMContext) -> None:
+    lang = await _get_lang(message.from_user.id)
     current_state = await state.get_state()
     if current_state is not None:
-        await message.answer(
-            "⚠️ Сначала завершите текущее действие.\nНажмите '❌ Отмена', чтобы прервать."
-        )
+        await message.answer(t("state_guard", lang))
         return
 
     await message.answer(
-        "❓ <b>Помощь</b>\n\n"
-        "Если у вас возникли проблемы, вы можете подать жалобу на водителя.",
+        t("help_title", lang),
         parse_mode="HTML",
-        reply_markup=help_kb(),
+        reply_markup=help_kb(lang),
     )
 
 
 # ── Complaint flow ──────────────────────────────────────────────────────────
 @router.callback_query(F.data == "help_complaint")
 async def complaint_start(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(callback.from_user.id)
     await state.set_state(ComplaintFSM.waiting_driver_name)
+    await state.update_data(lang=lang)
     await callback.message.edit_text(
-        "📛 <b>Жалоба на водителя</b>\n\n"
-        "Шаг 1/3: Введите <b>имя водителя</b> (как вы его знаете):",
+        t("complaint_step1", lang),
         parse_mode="HTML",
-        reply_markup=cancel_inline_kb(),
+        reply_markup=cancel_inline_kb(lang),
     )
 
 
 @router.message(ComplaintFSM.waiting_driver_name)
 async def complaint_driver_name(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
     await state.update_data(driver_name=message.text)
     await state.set_state(ComplaintFSM.waiting_driver_phone)
-    await message.answer(
-        "Шаг 2/3: Введите <b>номер телефона водителя</b>:",
-        parse_mode="HTML",
-        reply_markup=cancel_inline_kb(),
-    )
+    await message.answer(t("complaint_step2", lang), parse_mode="HTML", reply_markup=cancel_inline_kb(lang))
 
 
 @router.message(ComplaintFSM.waiting_driver_phone)
 async def complaint_driver_phone(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
     await state.update_data(driver_phone=message.text)
     await state.set_state(ComplaintFSM.waiting_reason)
-    await message.answer(
-        "Шаг 3/3: Опишите <b>причину жалобы</b> подробно:",
-        parse_mode="HTML",
-        reply_markup=cancel_inline_kb(),
-    )
+    await message.answer(t("complaint_step3", lang), parse_mode="HTML", reply_markup=cancel_inline_kb(lang))
 
 
 @router.message(ComplaintFSM.waiting_reason)
 async def complaint_reason(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     await state.clear()
 
     user = message.from_user
     complaint_text = (
-        f"🚨 <b>Новая жалоба!</b>\n\n"
-        f"<b>От клиента:</b> {user.full_name} (@{user.username or 'нет'}) "
+        f"🚨 <b>Yangi shikoyat / Новая жалоба!</b>\n\n"
+        f"<b>От:</b> {user.full_name} (@{user.username or 'нет'}) "
         f"[ID: <code>{user.id}</code>]\n\n"
         f"🚗 <b>Водитель (имя):</b> {data['driver_name']}\n"
         f"📞 <b>Телефон водителя:</b> {data['driver_phone']}\n\n"
-        f"📝 <b>Причина жалобы:</b>\n{message.text}"
+        f"📝 <b>Причина:</b>\n{message.text}"
     )
 
     for admin_id in ADMIN_IDS:
         try:
-            await message.bot.send_message(
-                chat_id=admin_id,
-                text=complaint_text,
-                parse_mode="HTML",
-            )
+            await message.bot.send_message(chat_id=admin_id, text=complaint_text, parse_mode="HTML")
         except Exception as e:
             print(f"Failed to send complaint to admin {admin_id}: {e}")
 
-    await message.answer(
-        "✅ Ваша жалоба успешно отправлена администратору.\n"
-        "Мы рассмотрим её в ближайшее время.",
-        reply_markup=client_main_kb(),
-    )
+    await message.answer(t("complaint_sent", lang), reply_markup=client_main_kb(lang))
 
 
 @router.callback_query(F.data == "help_cancel")
 async def complaint_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = data.get("lang", await _get_lang(callback.from_user.id))
     await state.clear()
-    await callback.message.edit_text("❌ Жалоба отменена.")
-    await callback.message.answer("Вы вернулись в главное меню.", reply_markup=client_main_kb())
+    await callback.message.edit_text(t("complaint_cancelled", lang))
+    await callback.message.answer(t("back_to_menu", lang), reply_markup=client_main_kb(lang))
 
 
-# ── 🚗 "Я водитель" section ────────────────────────────────────────────────
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-def driver_section_kb(is_registered: bool) -> InlineKeyboardMarkup:
+# ── 🚗 Driver section ──────────────────────────────────────────────────────
+def driver_section_kb(is_registered: bool, is_online: bool = False, lang: str = "ru") -> InlineKeyboardMarkup:
     if is_registered:
+        toggle_btn = InlineKeyboardButton(
+            text=t("btn_go_offline" if is_online else "btn_go_online", lang),
+            callback_data="driver_go_offline_menu" if is_online else "driver_go_online",
+        )
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Продолжить работу", callback_data="driver_go_online")],
-            [InlineKeyboardButton(text="👤 Профиль водителя", callback_data="driver_view_profile")],
+            [toggle_btn],
+            [InlineKeyboardButton(text=t("btn_driver_profile", lang), callback_data="driver_view_profile")],
         ])
     else:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Стать водителем", callback_data="driver_register")],
+            [InlineKeyboardButton(text=t("btn_become_driver", lang), callback_data="driver_register")],
         ])
 
 
-@router.message(F.text == "🚗 Я водитель")
+def _status_label(status: str, lang: str) -> str:
+    from models.driver import DriverStatus
+    mapping = {
+        DriverStatus.IDLE: t("driver_status_idle", lang),
+        DriverStatus.BUSY: t("driver_status_busy", lang),
+        DriverStatus.OFFLINE: t("driver_status_offline", lang),
+    }
+    return mapping.get(status, status)
+
+
+@router.message(F.text.in_({"🚗 Я водитель", "🚗 Men haydovchiman"}))
 async def driver_section(message: Message, state: FSMContext) -> None:
+    lang = await _get_lang(message.from_user.id)
     current_state = await state.get_state()
     if current_state is not None:
-        await message.answer(
-            "⚠️ Сначала завершите текущее действие.\nНажмите '❌ Отмена', чтобы прервать."
-        )
+        await message.answer(t("state_guard", lang))
         return
 
     async with AsyncSessionLocal() as session:
@@ -168,74 +201,98 @@ async def driver_section(message: Message, state: FSMContext) -> None:
 
     if driver and driver.is_active:
         from models.driver import DriverStatus
-        status_label = {
-            DriverStatus.IDLE: "🟢 Свободен",
-            DriverStatus.BUSY: "🔴 В поездке",
-            DriverStatus.OFFLINE: "⚫ Оффлайн",
-        }.get(driver.status, driver.status)
-
+        is_online = driver.status in (DriverStatus.IDLE, DriverStatus.BUSY)
         await message.answer(
-            f"🚗 <b>Профиль водителя</b>\n\n"
-            f"👤 <b>Имя:</b> {driver.name}\n"
-            f"📞 <b>Телефон:</b> {driver.phone}\n"
-            f"🚘 <b>Авто:</b> {driver.car_model} ({driver.car_number})\n"
-            f"📊 <b>Статус:</b> {status_label}",
+            t("driver_profile_title", lang).format(
+                name=driver.name, phone=driver.phone,
+                car_model=driver.car_model, car_number=driver.car_number,
+                status=_status_label(driver.status, lang),
+            ),
             parse_mode="HTML",
-            reply_markup=driver_section_kb(is_registered=True),
+            reply_markup=driver_section_kb(is_registered=True, is_online=is_online, lang=lang),
         )
     else:
         await message.answer(
-            "🚗 <b>Стать водителем</b>\n\n"
-            "Вы ещё не зарегистрированы как водитель.\n"
-            "Нажмите кнопку ниже, чтобы подать заявку.",
+            t("driver_not_registered", lang),
             parse_mode="HTML",
-            reply_markup=driver_section_kb(is_registered=False),
+            reply_markup=driver_section_kb(is_registered=False, lang=lang),
         )
 
 
 @router.callback_query(F.data == "driver_register")
 async def driver_register_via_button(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(callback.from_user.id)
     await callback.message.delete()
     from states.driver_registration import DriverRegistrationFSM
     await state.set_state(DriverRegistrationFSM.waiting_name)
-    await callback.message.answer(
-        "👤 Введите ваше полное имя:",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    await state.update_data(lang=lang)
+    await callback.message.answer(t("dreg_ask_name", lang), reply_markup=ReplyKeyboardRemove())
 
 
 @router.callback_query(F.data == "driver_view_profile")
 async def driver_view_profile(callback: CallbackQuery) -> None:
+    lang = await _get_lang(callback.from_user.id)
     async with AsyncSessionLocal() as session:
         driver = await driver_service.get_driver_by_user_id(session, callback.from_user.id)
 
     if not driver:
-        await callback.answer("Профиль не найден.", show_alert=True)
+        await callback.answer(t("not_registered", lang), show_alert=True)
         return
 
     from models.driver import DriverStatus
-    status_label = {
-        DriverStatus.IDLE: "🟢 Свободен",
-        DriverStatus.BUSY: "🔴 В поездке",
-        DriverStatus.OFFLINE: "⚫ Оффлайн",
-    }.get(driver.status, driver.status)
-
+    is_online = driver.status in (DriverStatus.IDLE, DriverStatus.BUSY)
     await callback.message.edit_text(
-        f"🚗 <b>Профиль водителя</b>\n\n"
-        f"👤 <b>Имя:</b> {driver.name}\n"
-        f"📞 <b>Телефон:</b> {driver.phone}\n"
-        f"🚘 <b>Авто:</b> {driver.car_model} ({driver.car_number})\n"
-        f"📊 <b>Статус:</b> {status_label}",
+        t("driver_profile_title", lang).format(
+            name=driver.name, phone=driver.phone,
+            car_model=driver.car_model, car_number=driver.car_number,
+            status=_status_label(driver.status, lang),
+        ),
         parse_mode="HTML",
-        reply_markup=driver_section_kb(is_registered=True),
+        reply_markup=driver_section_kb(is_registered=True, is_online=is_online, lang=lang),
     )
 
 
 @router.callback_query(F.data == "driver_go_online")
 async def driver_go_online_cb(callback: CallbackQuery) -> None:
+    lang = await _get_lang(callback.from_user.id)
     async with AsyncSessionLocal() as session:
-        await driver_service.set_driver_status(
-            session, callback.from_user.id, "idle"
-        )
-    await callback.answer("✅ Вы снова на линии!", show_alert=True)
-    await callback.message.edit_reply_markup(reply_markup=driver_section_kb(is_registered=True))
+        driver = await driver_service.get_driver_by_user_id(session, callback.from_user.id)
+        await driver_service.set_driver_status(session, callback.from_user.id, "idle")
+
+    if not driver:
+        await callback.answer(t("not_registered", lang), show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        t("driver_profile_title", lang).format(
+            name=driver.name, phone=driver.phone,
+            car_model=driver.car_model, car_number=driver.car_number,
+            status=t("driver_status_idle", lang),
+        ),
+        parse_mode="HTML",
+        reply_markup=driver_section_kb(is_registered=True, is_online=True, lang=lang),
+    )
+    await callback.answer("✅ " + t("driver_status_idle", lang))
+
+
+@router.callback_query(F.data == "driver_go_offline_menu")
+async def driver_go_offline_menu_cb(callback: CallbackQuery) -> None:
+    lang = await _get_lang(callback.from_user.id)
+    async with AsyncSessionLocal() as session:
+        driver = await driver_service.get_driver_by_user_id(session, callback.from_user.id)
+        await driver_service.set_driver_status(session, callback.from_user.id, "offline")
+
+    if not driver:
+        await callback.answer(t("not_registered", lang), show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        t("driver_profile_title", lang).format(
+            name=driver.name, phone=driver.phone,
+            car_model=driver.car_model, car_number=driver.car_number,
+            status=t("driver_status_offline", lang),
+        ),
+        parse_mode="HTML",
+        reply_markup=driver_section_kb(is_registered=True, is_online=False, lang=lang),
+    )
+    await callback.answer("⚫ " + t("driver_status_offline", lang))
